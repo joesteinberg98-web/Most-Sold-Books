@@ -143,6 +143,25 @@
     margin-top: 8px;
   }
 
+  .spine .vote-badge{
+    position: absolute;
+    top: -11px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--gold-bright);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 10px;
+    display: none;
+    white-space: nowrap;
+  }
+
+  .spine .vote-badge.show{ display: block; }
+
   .ledge{
     height: 16px;
     margin-top: -2px;
@@ -233,6 +252,50 @@
     line-height: 1.3;
   }
 
+  .vote-row{
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 26px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(201,162,39,.3);
+  }
+
+  .vote-btn{
+    font-family: 'Inter', sans-serif;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink);
+    background: var(--gold-bright);
+    border: none;
+    border-radius: 4px;
+    padding: 10px 18px;
+    cursor: pointer;
+    transition: background .18s ease, transform .18s ease;
+  }
+
+  .vote-btn:hover{ background: #f0d876; }
+  .vote-btn:active{ transform: scale(.97); }
+
+  .vote-btn.voted{
+    background: transparent;
+    color: var(--gold-bright);
+    border: 1px solid var(--gold-bright);
+  }
+
+  .vote-btn.voted:hover{ background: rgba(228,195,79,.1); }
+
+  .vote-count{
+    font-size: 13px;
+    color: var(--paper-dim);
+  }
+
+  .vote-count strong{
+    color: var(--paper);
+    font-weight: 600;
+  }
+
   footer{
     margin-top: 22px;
     font-size: 12px;
@@ -289,10 +352,16 @@
         <div class="stat-value" id="stat-country"></div>
       </div>
     </div>
+
+    <div class="vote-row">
+      <button class="vote-btn" id="vote-btn"></button>
+      <span class="vote-count" id="vote-count"></span>
+    </div>
   </div>
 
   <footer>
     Figures are widely cited estimates, not verified sales-tracking data — precise numbers are especially hard to pin down for older and heavily translated works. Rankings can vary between sources depending on whether series are counted as a whole or by individual title.
+    <span id="vote-scope-note"></span>
   </footer>
 </div>
 
@@ -335,7 +404,7 @@
     btn.style.setProperty('--h', heightFor(book.sales) + 'px');
     btn.style.background = `linear-gradient(90deg, rgba(0,0,0,.28), ${book.color} 14%, ${book.color} 86%, rgba(255,255,255,.12))`;
     btn.setAttribute('aria-label', book.title + ', ' + book.sales + ' million copies sold');
-    btn.innerHTML = `<span class="label">${book.spineLabel}</span><span class="rank">${i + 1}</span>`;
+    btn.innerHTML = `<span class="vote-badge" id="badge-${i}"></span><span class="label">${book.spineLabel}</span><span class="rank">${i + 1}</span>`;
     btn.addEventListener('click', () => selectBook(i));
     shelf.appendChild(btn);
   });
@@ -354,9 +423,78 @@
     document.getElementById('stat-year').textContent = book.year;
     document.getElementById('stat-sales').textContent = formatSales(book.sales);
     document.getElementById('stat-country').textContent = book.flag + '  ' + book.country;
+    updateVoteUI();
   }
 
+  // --- Voting ---
+  const storageAvailable = typeof window.storage !== 'undefined';
+  let votes = {};      // index -> vote count
+  let myVote = null;   // index this browser voted for, or null
+  const voteBtn = document.getElementById('vote-btn');
+  const voteCountEl = document.getElementById('vote-count');
+  const scopeNoteEl = document.getElementById('vote-scope-note');
+
+  scopeNoteEl.textContent = storageAvailable
+    ? ' Votes below are shared with everyone who opens this page.'
+    : ' Votes below reset if you reload the page — this copy isn\u2019t connected to shared storage.';
+
+  function totalVotes(){
+    return Object.values(votes).reduce((a, b) => a + b, 0);
+  }
+
+  function renderBadges(){
+    books.forEach((book, i) => {
+      const badge = document.getElementById('badge-' + i);
+      const count = votes[i] || 0;
+      if (count > 0){
+        badge.textContent = count + (count === 1 ? ' vote' : ' votes');
+        badge.classList.add('show');
+      } else {
+        badge.classList.remove('show');
+      }
+    });
+  }
+
+  function updateVoteUI(){
+    const count = votes[selectedIndex] || 0;
+    const iVotedForThis = myVote === selectedIndex;
+    voteBtn.textContent = iVotedForThis ? 'Your vote \u2713' : 'Vote for this book';
+    voteBtn.classList.toggle('voted', iVotedForThis);
+    const total = totalVotes();
+    voteCountEl.innerHTML = total > 0
+      ? '<strong>' + count + '</strong> ' + (count === 1 ? 'vote' : 'votes') + ' so far \u2022 ' + total + ' total cast'
+      : 'Be the first to vote for a favorite.';
+  }
+
+  async function loadVotes(){
+    if (!storageAvailable){ renderBadges(); updateVoteUI(); return; }
+    try {
+      const result = await window.storage.get('book-votes', true);
+      votes = result && result.value ? JSON.parse(result.value) : {};
+    } catch (e) {
+      votes = {};
+    }
+    renderBadges();
+    updateVoteUI();
+  }
+
+  async function castVote(i){
+    if (myVote === i) return;
+    if (myVote !== null) votes[myVote] = Math.max(0, (votes[myVote] || 0) - 1);
+    votes[i] = (votes[i] || 0) + 1;
+    myVote = i;
+    renderBadges();
+    updateVoteUI();
+    if (storageAvailable){
+      try { await window.storage.set('book-votes', JSON.stringify(votes), true); }
+      catch (e) { /* vote still counted locally for this session */ }
+    }
+  }
+
+  voteBtn.addEventListener('click', () => castVote(selectedIndex));
+
   selectBook(0);
+  loadVotes();
 
   // entrance animation
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
